@@ -28,7 +28,7 @@ use ort::execution_providers::CUDAExecutionProvider;
 use ort::execution_providers::CoreMLExecutionProvider;
 // DirectML: Windows only
 #[cfg(all(feature = "directml", target_os = "windows"))]
-use ort::execution_providers::DirectMLExecutionProvider;
+use ort::execution_providers::{DirectMLExecutionProvider, ExecutionProvider};
 // oneDNN: All platforms
 #[cfg(feature = "onednn")]
 use ort::execution_providers::OneDNNExecutionProvider;
@@ -72,10 +72,18 @@ fn get_execution_providers() -> Vec<ExecutionProviderDispatch> {
 
     #[cfg(all(feature = "directml", target_os = "windows"))]
     {
-        providers.push(
-            DirectMLExecutionProvider::default()
-                .build()
-        );
+        // 尝试多个设备 ID，从 0 开始
+        for device_id in 0..4 {
+            let dml_provider = DirectMLExecutionProvider::default().with_device_id(device_id);
+            if let Ok(true) = dml_provider.is_available() {
+                eprintln!("DirectML is available (device_id: {})", device_id);
+                providers.push(dml_provider.build());
+                break;
+            }
+        }
+        if providers.is_empty() {
+            eprintln!("DirectML is not available on any device!");
+        }
     }
 
     #[cfg(feature = "onednn")]
@@ -125,18 +133,28 @@ pub fn preload(h: &ModelHandle) -> Result<()> {
         
         eprintln!("Trying execution providers: {:?} (with CPU fallback)", provider_names);
         
-        match SessionBuilder::new()?
-            .with_optimization_level(GraphOptimizationLevel::Level3)?
-            .with_execution_providers(providers)
-        {
-            Ok(builder) => {
-                builder
-                    .with_intra_threads(num_threads)?
-                    .with_inter_threads(num_threads)?
-                    .commit_from_file(&h.local_path)?
-            }
+        // Try GPU providers first, fallback to CPU on any error
+        let gpu_result = (|| -> std::result::Result<Session, ort::Error> {
+            let builder = SessionBuilder::new()?
+                .with_optimization_level(GraphOptimizationLevel::Level3)?
+                .with_execution_providers(providers)?;
+            builder
+                .with_intra_threads(num_threads)?
+                .with_inter_threads(num_threads)?
+                .commit_from_file(&h.local_path)
+        })();
+        
+        match gpu_result {
+            Ok(session) => {
+                eprintln!("Successfully initialized session with GPU providers!");
+                session
+            },
             Err(e) => {
-                eprintln!("GPU providers failed ({}), using CPU ({} threads)", e, num_threads);
+                eprintln!("GPU providers failed!");
+                eprintln!("  Error type: {:?}", std::any::type_name_of_val(&e));
+                eprintln!("  Error message: {}", e);
+                eprintln!("  Debug: {:?}", e);
+                eprintln!("Falling back to CPU ({} threads)", num_threads);
                 SessionBuilder::new()?
                     .with_optimization_level(GraphOptimizationLevel::Level3)?
                     .with_intra_threads(num_threads)?

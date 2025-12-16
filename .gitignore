@@ -4,3 +4,6 @@
 .venv
 /output
 /out
+*.dll
+*.mp3
+*.txt

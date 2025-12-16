@@ -21,7 +21,10 @@ pub mod io {
 }
 
 // Public API
-pub use crate::core::splitter::split_file;
+pub use crate::core::splitter::{
+    split_file, remove_vocals, VocalRemovalResult,
+    Separator, SeparatedStems, Stem,
+};
 pub use crate::io::progress::{
     set_download_progress_callback, set_split_progress_callback, SplitProgress,
 };

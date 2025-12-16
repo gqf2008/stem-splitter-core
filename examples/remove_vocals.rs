@@ -1,8 +1,12 @@
+//! Example: Remove vocals from an audio file
+//! 
+//! Usage: cargo run --example remove_vocals -- input.mp3 [output_dir]
+
 use stem_splitter_core::SplitProgress;
 
 fn main() -> anyhow::Result<()> {
     let mut args = std::env::args().skip(1);
-    let input = args.next().unwrap_or_else(|| "1.mp3".into());
+    let input = args.next().unwrap_or_else(|| "2.mp3".into());
     let out = args.next().unwrap_or_else(|| "./out".into());
 
     stem_splitter_core::set_download_progress_callback(|d, t| {
@@ -25,26 +29,17 @@ fn main() -> anyhow::Result<()> {
         SplitProgress::Stage(s) => {
             eprintln!("> {}", s);
         }
-        SplitProgress::Chunks {
-            done,
-            total,
-            percent,
-        } => {
+        SplitProgress::Chunks { done, total, percent } => {
             eprint!("\rSplit: {}/{} ({:.0}%)", done, total, percent);
             if done >= total {
                 eprintln!();
             }
         }
-        SplitProgress::Writing {
-            ref stem,
-            done,
-            total,
-            percent,
-        } => {
+        SplitProgress::Writing { ref stem, done, total, percent } => {
             eprintln!("Writing {}: {}/{} ({:.0}%)", stem, done, total, percent);
         }
         SplitProgress::Finished => {
-            eprintln!("Split finished.");
+            eprintln!("Finished.");
         }
     });
 
@@ -54,10 +49,12 @@ fn main() -> anyhow::Result<()> {
         manifest_url_override: None,
     };
 
-    let res = stem_splitter_core::split_file(&input, opts)?;
-    eprintln!(
-        "Done:\n{}\n{}\n{}\n{}",
-        res.vocals_path, res.drums_path, res.bass_path, res.other_path
-    );
+    // Use remove_vocals instead of split_file
+    let res = stem_splitter_core::remove_vocals(&input, opts)?;
+    
+    eprintln!("\nDone:");
+    eprintln!("  Instrumental (no vocals): {}", res.instrumental_path);
+    eprintln!("  Vocals only: {}", res.vocals_path);
+    
     Ok(())
 }

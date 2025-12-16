@@ -27,7 +27,7 @@ ndarray = "0.15"
 anyhow = "1"        
 symphonia = { version = "0.5", features = ["mp3", "wav"] }
 tempfile = "3.8"
-ort = { version = "2.0.0-rc.10", features = ["download-binaries"] }
+ort = { version = "2.0.0-rc.10", features = ["download-binaries", "copy-dylibs"] }
 serde = { version="1", features=["derive"] }
 serde_json = "1"
 reqwest = { version="0.12", features=["blocking","json"] }
@@ -48,13 +48,14 @@ httpmock = "0.7"              # to simulate remote manifest/model servers
 tempfile = "3.8"              # also used in tests for isolated dirs
 
 [features]
-default = ["cuda", "coreml", "directml", "onednn"]
+default = ["onednn"]
 engine-mock = []
 
-# GPU acceleration providers - enable all by default, code handles platform detection
-# Providers that don't apply to the target platform are automatically skipped
-cuda = ["ort/cuda"]           # NVIDIA GPUs (Linux, Windows)
-coreml = ["ort/coreml"]       # Apple Silicon (macOS only)  
-directml = ["ort/directml"]   # DirectML (Windows only)
-onednn = ["ort/onednn"]       # Intel optimized (all platforms)
+# GPU acceleration providers - enable based on your hardware
+cuda = ["ort/cuda"]              # NVIDIA GPUs (Linux, Windows)
+tensorrt = ["ort/tensorrt"]      # NVIDIA TensorRT (high performance)
+coreml = ["ort/coreml"]          # Apple Silicon (macOS only)  
+directml = ["ort/directml"]      # DirectML (Windows, any GPU)
+onednn = ["ort/onednn"]          # Intel optimized (all platforms)
+half = ["ort/half"]              # FP16 half-precision (faster on GPU)
 
