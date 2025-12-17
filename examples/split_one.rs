@@ -53,6 +53,7 @@ fn main() -> anyhow::Result<()> {
         model_name: "htdemucs_ort_v1".into(),
         manifest_url_override: None,
         model_path: None,
+        chunk_seconds: Some(300), // 5 minutes per chunk for long audio
     };
 
     let res = stem_splitter_core::split_file(&input, opts)?;

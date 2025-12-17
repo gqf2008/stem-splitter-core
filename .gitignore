@@ -7,3 +7,4 @@
 *.dll
 *.mp3
 *.txt
+/out_test

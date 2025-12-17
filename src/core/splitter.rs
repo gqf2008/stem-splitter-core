@@ -245,7 +245,88 @@ struct StemDataInternal {
     n: usize,
 }
 
+/// Process a single chunk of audio through the model
+fn process_chunk(
+    stereo: &[[f32; 2]],
+    chunk_start: usize,
+    chunk_len: usize,
+    win: usize,
+    hop: usize,
+    stems_count: usize,
+) -> Result<Vec<Vec<[f32; 2]>>> {
+    let mut left_raw = vec![0f32; win];
+    let mut right_raw = vec![0f32; win];
+    
+    let mut chunk_acc: Vec<Vec<[f32; 2]>> = vec![vec![[0f32; 2]; chunk_len]; stems_count];
+    let mut pos = 0usize;
+
+    while pos < chunk_len {
+        // Fill window buffer
+        for i in 0..win {
+            let global_idx = chunk_start + pos + i;
+            if global_idx < stereo.len() {
+                left_raw[i] = stereo[global_idx][0];
+                right_raw[i] = stereo[global_idx][1];
+            } else {
+                left_raw[i] = 0.0;
+                right_raw[i] = 0.0;
+            }
+        }
+
+        let out = engine::run_window_demucs(&left_raw, &right_raw)?;
+        let (s_count, _, t_out) = (out.shape()[0], out.shape()[1], out.shape()[2]);
+
+        let copy_len = hop.min(t_out).min(chunk_len - pos);
+        for st in 0..s_count.min(stems_count) {
+            for i in 0..copy_len {
+                chunk_acc[st][pos + i][0] = out[(st, 0, i)];
+                chunk_acc[st][pos + i][1] = out[(st, 1, i)];
+            }
+        }
+
+        if pos + hop >= chunk_len {
+            break;
+        }
+        pos += hop;
+    }
+
+    Ok(chunk_acc)
+}
+
+/// Apply crossfade between two adjacent chunks
+fn apply_crossfade(
+    acc: &mut Vec<Vec<[f32; 2]>>,
+    chunk_acc: &[Vec<[f32; 2]>],
+    chunk_start: usize,
+    chunk_len: usize,
+    overlap_samples: usize,
+    stems_count: usize,
+) {
+    for st in 0..stems_count {
+        for i in 0..chunk_len {
+            let global_i = chunk_start + i;
+            if global_i >= acc[st].len() {
+                break;
+            }
+            
+            if i < overlap_samples && chunk_start > 0 {
+                // Crossfade region: blend old and new data
+                let fade_in = i as f32 / overlap_samples as f32;
+                let fade_out = 1.0 - fade_in;
+                
+                acc[st][global_i][0] = acc[st][global_i][0] * fade_out + chunk_acc[st][i][0] * fade_in;
+                acc[st][global_i][1] = acc[st][global_i][1] * fade_out + chunk_acc[st][i][1] * fade_in;
+            } else {
+                // Outside crossfade: just copy
+                acc[st][global_i][0] = chunk_acc[st][i][0];
+                acc[st][global_i][1] = chunk_acc[st][i][1];
+            }
+        }
+    }
+}
+
 /// Core separation logic - shared between all public APIs
+/// Supports chunked processing for long audio files to reduce memory usage.
 fn separate_stems_internal(input_path: &str, opts: &SplitOptions) -> Result<StemDataInternal> {
     emit_split_progress(SplitProgress::Stage("resolve_model"));
     
@@ -281,54 +362,78 @@ fn separate_stems_internal(input_path: &str, opts: &SplitOptions) -> Result<Stem
         return Err(anyhow::anyhow!("Bad win/hop in manifest").into());
     }
 
+    let stems_names = mf.stems.clone();
+    let stems_count = stems_names.len().max(4);
+
+    // Calculate chunk size based on chunk_seconds option
+    // Default is 5 minutes (300 seconds) = 13,230,000 samples at 44100Hz
+    let chunk_seconds = opts.chunk_seconds.unwrap_or(300);
+    let chunk_samples = (chunk_seconds as usize) * (mf.sample_rate as usize);
+    
+    // Ensure chunk is at least as big as one window, and align to hop
+    let chunk_samples = chunk_samples.max(win * 2);
+    let chunk_samples = (chunk_samples / hop) * hop; // Align to hop
+    
+    // Overlap between chunks for smooth crossfade (2 seconds)
+    let overlap_samples = (2 * mf.sample_rate as usize).min(chunk_samples / 4);
+
     if std::env::var("DEBUG_STEMS").is_ok() {
-        eprintln!("Window settings: win={}, hop={}, overlap={}", win, hop, win - hop);
+        eprintln!("Audio length: {} samples ({:.1} minutes)", n, n as f64 / 44100.0 / 60.0);
+        eprintln!("Chunk size: {} samples ({:.1} seconds)", chunk_samples, chunk_samples as f64 / 44100.0);
+        eprintln!("Overlap: {} samples ({:.1} seconds)", overlap_samples, overlap_samples as f64 / 44100.0);
+        eprintln!("Window: {}, Hop: {}", win, hop);
     }
 
-    let stems_names = mf.stems.clone();
-    let mut stems_count = stems_names.len().max(1);
-
-    let mut left_raw = vec![0f32; win];
-    let mut right_raw = vec![0f32; win];
-
-    let mut acc: Vec<Vec<[f32; 2]>> = Vec::new();
-    let mut pos = 0usize;
-    let mut first_chunk = true;
-
+    // Initialize accumulators for all stems
+    let mut acc: Vec<Vec<[f32; 2]>> = vec![vec![[0f32; 2]; n]; stems_count];
+    
     emit_split_progress(SplitProgress::Stage("infer"));
-    while pos < n {
-        for i in 0..win {
-            let idx = pos + i;
-            if idx < n {
-                left_raw[i] = stereo[idx][0];
-                right_raw[i] = stereo[idx][1];
-            } else {
-                left_raw[i] = 0.0;
-                right_raw[i] = 0.0;
+
+    // Process in chunks if audio is long
+    if n > chunk_samples {
+        let total_chunks = (n + chunk_samples - overlap_samples - 1) / (chunk_samples - overlap_samples);
+        let mut chunk_idx = 0;
+        let mut chunk_start = 0usize;
+        
+        while chunk_start < n {
+            let chunk_end = (chunk_start + chunk_samples).min(n);
+            let chunk_len = chunk_end - chunk_start;
+            
+            chunk_idx += 1;
+            if std::env::var("DEBUG_STEMS").is_ok() {
+                eprintln!("Processing chunk {}/{}: samples {}..{} ({:.1}%)", 
+                    chunk_idx, total_chunks, chunk_start, chunk_end, 
+                    (chunk_end as f64 / n as f64) * 100.0);
             }
+            
+            // Emit progress for this chunk
+            emit_split_progress(SplitProgress::Writing {
+                stem: format!("chunk {}/{}", chunk_idx, total_chunks),
+                done: chunk_end,
+                total: n,
+                percent: ((chunk_end as f64 / n as f64) * 100.0) as f32,
+            });
+
+            // Process this chunk
+            let chunk_acc = process_chunk(&stereo, chunk_start, chunk_len, win, hop, stems_count)?;
+            
+            // Apply to main accumulator with crossfade
+            apply_crossfade(&mut acc, &chunk_acc, chunk_start, chunk_len, overlap_samples, stems_count);
+            
+            // Move to next chunk (with overlap)
+            if chunk_end >= n {
+                break;
+            }
+            chunk_start = chunk_end - overlap_samples;
         }
-
-        let out = engine::run_window_demucs(&left_raw, &right_raw)?;
-        let (s_count, _, t_out) = (out.shape()[0], out.shape()[1], out.shape()[2]);
-
-        if first_chunk {
-            stems_count = s_count;
-            acc = vec![vec![[0f32; 2]; n]; stems_count];
-            first_chunk = false;
-        }
-
-        let copy_len = hop.min(t_out).min(n - pos);
+    } else {
+        // Short audio: process in one go (original logic)
+        let chunk_acc = process_chunk(&stereo, 0, n, win, hop, stems_count)?;
         for st in 0..stems_count {
-            for i in 0..copy_len {
-                acc[st][pos + i][0] = out[(st, 0, i)];
-                acc[st][pos + i][1] = out[(st, 1, i)];
+            for i in 0..n {
+                acc[st][i] = chunk_acc[st][i];
             }
         }
-
-        if pos + hop >= n {
-            break;
-        }
-        pos += hop;
     }
 
     let names = if stems_names.is_empty() {

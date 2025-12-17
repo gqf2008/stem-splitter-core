@@ -16,6 +16,16 @@ pub struct SplitOptions {
     /// If set, skips downloading and uses this file directly.
     #[serde(default)]
     pub model_path: Option<String>,
+    /// Chunk duration in seconds for processing long audio files.
+    /// If None or 0, uses automatic chunking based on available memory.
+    /// Default: 300 seconds (5 minutes)
+    /// Set to a smaller value if you run out of memory.
+    #[serde(default = "default_chunk_seconds")]
+    pub chunk_seconds: Option<u32>,
+}
+
+fn default_chunk_seconds() -> Option<u32> {
+    Some(60) // 1 minute default - lower memory usage
 }
 
 impl Default for SplitOptions {
@@ -25,6 +35,7 @@ impl Default for SplitOptions {
             model_name: "htdemucs_ort_v1".into(),
             manifest_url_override: None,
             model_path: None,
+            chunk_seconds: default_chunk_seconds(),
         }
     }
 }
