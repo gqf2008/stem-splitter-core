@@ -47,6 +47,7 @@ fn main() -> anyhow::Result<()> {
         output_dir: out,
         model_name: "htdemucs_ort_v1".into(),
         manifest_url_override: None,
+        model_path: None,
     };
 
     // Use remove_vocals instead of split_file

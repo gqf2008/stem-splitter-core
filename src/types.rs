@@ -12,6 +12,10 @@ pub struct SplitOptions {
     pub output_dir: String,
     pub model_name: String,
     pub manifest_url_override: Option<String>,
+    /// Custom local path to the ONNX model file.
+    /// If set, skips downloading and uses this file directly.
+    #[serde(default)]
+    pub model_path: Option<String>,
 }
 
 impl Default for SplitOptions {
@@ -20,6 +24,7 @@ impl Default for SplitOptions {
             output_dir: ".".into(),
             model_name: "htdemucs_ort_v1".into(),
             manifest_url_override: None,
+            model_path: None,
         }
     }
 }

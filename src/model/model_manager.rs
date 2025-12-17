@@ -16,6 +16,45 @@ pub struct ModelHandle {
     pub local_path: PathBuf,
 }
 
+/// Load a model from a custom local path.
+/// Creates a default manifest with htdemucs settings.
+pub fn load_model_from_path(model_path: &str) -> Result<ModelHandle> {
+    let path = PathBuf::from(model_path);
+    if !path.exists() {
+        return Err(StemError::Anyhow(anyhow::anyhow!(
+            "Model file not found: {}",
+            model_path
+        )));
+    }
+
+    // Create a default manifest for htdemucs model
+    let manifest = ModelManifest {
+        name: "htdemucs_custom".to_string(),
+        version: "1.0.0".to_string(),
+        backend: "onnx".to_string(),
+        format: "onnx".to_string(),
+        opset: Some(17),
+        sample_rate: 44100,
+        window: 343980,
+        hop: 171990,
+        stems: vec!["drums".into(), "bass".into(), "other".into(), "vocals".into()],
+        input_layout: String::new(),
+        output_layout: String::new(),
+        inputs: vec![],
+        outputs: vec![],
+        artifacts: vec![],
+        entry: String::new(),
+        url: String::new(),
+        sha256: String::new(),
+        filesize: 0,
+    };
+
+    Ok(ModelHandle {
+        manifest,
+        local_path: path,
+    })
+}
+
 pub fn ensure_model(model_name: &str, manifest_url_override: Option<&str>) -> Result<ModelHandle> {
     let manifest_url = manifest_url_override
         .map(|s| s.to_string())

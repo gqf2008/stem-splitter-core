@@ -28,7 +28,7 @@ pub use crate::core::splitter::{
 pub use crate::io::progress::{
     set_download_progress_callback, set_split_progress_callback, SplitProgress,
 };
-pub use crate::model::model_manager::{ensure_model, ModelHandle};
+pub use crate::model::model_manager::{ensure_model, load_model_from_path, ModelHandle};
 pub use crate::types::{AudioData, ModelManifest, SplitOptions, SplitResult};
 
 pub fn prepare_model(model_name: &str, manifest_url_override: Option<&str>) -> error::Result<()> {

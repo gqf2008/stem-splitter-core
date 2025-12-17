@@ -6,7 +6,7 @@ use crate::{
     },
     error::Result,
     io::progress::{emit_split_progress, SplitProgress},
-    model::model_manager::ensure_model,
+    model::model_manager::{ensure_model, load_model_from_path},
     types::{AudioData, SplitOptions, SplitResult},
 };
 
@@ -248,7 +248,13 @@ struct StemDataInternal {
 /// Core separation logic - shared between all public APIs
 fn separate_stems_internal(input_path: &str, opts: &SplitOptions) -> Result<StemDataInternal> {
     emit_split_progress(SplitProgress::Stage("resolve_model"));
-    let handle = ensure_model(&opts.model_name, opts.manifest_url_override.as_deref())?;
+    
+    // Use custom model path if provided, otherwise download/cache model
+    let handle = if let Some(ref model_path) = opts.model_path {
+        load_model_from_path(model_path)?
+    } else {
+        ensure_model(&opts.model_name, opts.manifest_url_override.as_deref())?
+    };
 
     emit_split_progress(SplitProgress::Stage("engine_preload"));
     engine::preload(&handle)?;
